@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -1071,9 +1072,9 @@ func StartElasticSearchService(ctx context.Context, config_obj *cloud_velo_confi
 	primary_config := opensearch.Config{
 		Addresses: config_obj.Cloud.Addresses,
 	}
-	logger.Info("OpenSearch config %v", &primary_config)
+	log.Printf("OpenSearch config %v", &primary_config)
 
-	logger.Info("createOpenSearchClientFromConfig")
+	log.Printf("createOpenSearchClientFromConfig")
 	primary_client, err := createOpenSearchClientFromConfig(
 		ctx, config_obj, primary_config)
 	if err != nil {
@@ -1081,7 +1082,7 @@ func StartElasticSearchService(ctx context.Context, config_obj *cloud_velo_confi
 	}
 
 	// Set the global elastic client
-	logger.Info("SetElasticClient")
+	log.Printf("SetElasticClient")
 	SetElasticClient(PrimaryOpenSearch, primary_client)
 
 	// Secondary Clients are only required in environments big enough
@@ -1110,7 +1111,7 @@ func createOpenSearchClientFromConfig(ctx context.Context, config_obj *cloud_vel
 		return nil, errors.New("cloud ingestion: Unable to add root certs")
 	}
 
-	logger.Info("Create OpenSearch http transport")
+	log.Printf("Create OpenSearch http transport")
 	openSearchConfigs.Transport = &http.Transport{
 		MaxIdleConnsPerHost:   10,
 		ResponseHeaderTimeout: 100 * time.Second,
@@ -1126,18 +1127,18 @@ func createOpenSearchClientFromConfig(ctx context.Context, config_obj *cloud_vel
 		openSearchConfigs.Username = config_obj.Cloud.Username
 		openSearchConfigs.Password = config_obj.Cloud.Password
 	} else {
-		logger.Info("Creating signer config")
+		log.Printf("Creating signer config")
 		signer_config, err := config.LoadDefaultConfig(ctx)
-		logger.Info("Create requestsigner")
+		log.Printf("Create requestsigner")
 		signer, err := requestsigner.NewSigner(signer_config)
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("Setting OpenSearch config signed")
+		log.Printf("Setting OpenSearch config signed")
 		openSearchConfigs.Signer = signer
 	}
 
-	logger.Info("Create OpenSearch client")
+	log.Printf("Create OpenSearch client")
 	client, err := opensearch.NewClient(openSearchConfigs)
 
 	if err != nil {
@@ -1146,7 +1147,7 @@ func createOpenSearchClientFromConfig(ctx context.Context, config_obj *cloud_vel
 
 	// Fetch info immediately to verify that we can actually connect
 	// to the server.
-	logger.Info("Verifying OpenSearch client connection")
+	log.Printf("Verifying OpenSearch client connection")
 	res, err := client.Info()
 	if err != nil {
 		return nil, err
