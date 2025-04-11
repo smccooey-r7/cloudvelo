@@ -1111,6 +1111,15 @@ func createOpenSearchClientFromConfig(ctx context.Context, config_obj *cloud_vel
 		return nil, errors.New("cloud ingestion: Unable to add root certs")
 	}
 
+	// Attempt fall back to system cert pool if fileb0x crypto/ca-certificates.crt isn't appended for whatever reason
+	if len(CA_Pool.Subjects()) == 0 {
+		var err error
+		CA_Pool, err = x509.SystemCertPool()
+		if err != nil {
+			log.Printf("Failed to retrieve system cert pool: %v", err)
+		}
+	}
+
 	log.Printf("Create OpenSearch http transport")
 	openSearchConfigs.Transport = &http.Transport{
 		MaxIdleConnsPerHost:   10,
