@@ -7,3 +7,9 @@ import (
 var (
 	VERSION = constants.VERSION
 )
+
+const (
+	TRANSIENT                 = "transient"
+	PERSISTED                 = "persisted"
+	OPENSEARCH_DOCUMENT_LIMIT = 10000
+)

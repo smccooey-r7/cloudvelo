@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/Velocidex/ordereddict"
+	"www.velocidex.com/golang/cloudvelo/constants"
 	"www.velocidex.com/golang/cloudvelo/filestore"
 	cvelo_services "www.velocidex.com/golang/cloudvelo/services"
 	"www.velocidex.com/golang/velociraptor/file_store/api"
@@ -116,44 +117,82 @@ func (self *SimpleResultSetReader) getPacket(
 	return item, nil
 }
 
+func (self *SimpleResultSetReader) getPackets(ctx context.Context) ([]*SimpleResultSetRecord, error) {
+	var artifactClause, matchOn string
+
+	if self.base_record.VFSPath != "" {
+		matchOn = json.Format(`
+  {"match": {"vfs_path": %q}},
+  {"match": {"id": %q}},
+  {"match": {"type": "result_set"}}`, self.base_record.VFSPath, self.base_record.ID)
+
+	} else {
+		if self.base_record.Artifact != "" {
+			artifactClause = json.Format(`{"match": {"artifact": %q}}`, self.base_record.Artifact)
+		}
+		matchOn = json.Format(`
+{"match": {"client_id": %q}},
+  {"match": {"flow_id": %q}},
+  {"match": {"type": %q}},
+  {"match": {"id": %q}},
+  {"match": {"type": "result_set"}},
+%s`, self.base_record.ClientId,
+			self.base_record.FlowId,
+			self.base_record.Type,
+			self.base_record.ID,
+			artifactClause)
+	}
+
+	orgId := filestore.GetOrgId(self.file_store_factory)
+
+	minBound := self.row
+	var records []*SimpleResultSetRecord
+	for {
+		boundedMatchOn := matchOn + json.Format(`, {"range": {"start_row": {"gte": %q, "lt": %q}}}`, minBound, minBound+constants.OPENSEARCH_DOCUMENT_LIMIT)
+		sortedQuery := json.Format(`{"query": {"bool": {"must": [%s]}}, "sort": [{"start_row": {"order": "asc"}}]}`, boundedMatchOn)
+		hits, _, err := cvelo_services.QueryElasticRaw(ctx, orgId, constants.TRANSIENT, sortedQuery)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(hits) == 0 {
+			break
+		}
+
+		minBound += int64(len(hits))
+
+		record := &SimpleResultSetRecord{}
+		err = json.Unmarshal(hits[0], &record)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+
+	}
+	return records, nil
+}
+
 func (self *SimpleResultSetReader) Rows(
 	ctx context.Context) <-chan *ordereddict.Dict {
 	output_chan := make(chan *ordereddict.Dict)
 
-	last_row := int64(-1)
-
 	go func() {
 		defer close(output_chan)
 
-		for {
-			// No progress has been made something is wrong.
-			if last_row == self.row {
-				break
-			}
+		packets, err := self.getPackets(ctx)
+		if err != nil {
+			return
+		}
 
-			packet, err := self.getPacket(ctx, self.row)
-			if err != nil {
-				return
-			}
-			last_row = self.row
-
-			start_row := packet.StartRow
+		for _, packet := range packets {
 			reader := bufio.NewReader(strings.NewReader(packet.JSONData))
+
 			for {
 				row_data, err := reader.ReadBytes('\n')
 				if err != nil && len(row_data) == 0 {
 					// Packet is exhausted, go get the next packet
 					break
 				}
-
-				// Consume the first few rows until we get to the one
-				// we need.
-				if start_row < self.row {
-					start_row++
-					continue
-				}
-				self.row++
-				start_row++
 
 				row := ordereddict.NewDict()
 				err = row.UnmarshalJSON(row_data)
@@ -169,9 +208,7 @@ func (self *SimpleResultSetReader) Rows(
 				}
 			}
 		}
-
 	}()
-
 	return output_chan
 }
 
