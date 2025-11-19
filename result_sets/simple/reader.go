@@ -145,11 +145,11 @@ func (self *SimpleResultSetReader) getPackets(ctx context.Context) ([]*SimpleRes
 
 	orgId := filestore.GetOrgId(self.file_store_factory)
 
-	minBound := self.row
+	minBound := 0
 	var records []*SimpleResultSetRecord
 	for {
 		boundedMatchOn := matchOn + json.Format(`, {"range": {"start_row": {"gte": %q, "lt": %q}}}`, minBound, minBound+constants.OPENSEARCH_DOCUMENT_LIMIT)
-		sortedQuery := json.Format(`{"query": {"bool": {"must": [%s]}}, "sort": [{"start_row": {"order": "asc"}}]}`, boundedMatchOn)
+		sortedQuery := json.Format(`{"query": {"bool": {"must": [%s]}}, "sort": [{"start_row": {"order": "asc"}}], "size": %q}`, boundedMatchOn, constants.OPENSEARCH_DOCUMENT_LIMIT)
 		hits, _, err := cvelo_services.QueryElasticRaw(ctx, orgId, constants.TRANSIENT, sortedQuery)
 		if err != nil {
 			return nil, err
@@ -159,7 +159,7 @@ func (self *SimpleResultSetReader) getPackets(ctx context.Context) ([]*SimpleRes
 			break
 		}
 
-		minBound += int64(len(hits))
+		minBound += constants.OPENSEARCH_DOCUMENT_LIMIT
 
 		record := &SimpleResultSetRecord{}
 		err = json.Unmarshal(hits[0], &record)
@@ -185,6 +185,7 @@ func (self *SimpleResultSetReader) Rows(
 		}
 
 		for _, packet := range packets {
+			start_row := packet.StartRow
 			reader := bufio.NewReader(strings.NewReader(packet.JSONData))
 
 			for {
@@ -193,6 +194,15 @@ func (self *SimpleResultSetReader) Rows(
 					// Packet is exhausted, go get the next packet
 					break
 				}
+
+				// Consume the first few rows until we get to the one
+				// we need.
+				if start_row < self.row {
+					start_row++
+					continue
+				}
+				self.row++
+				start_row++
 
 				row := ordereddict.NewDict()
 				err = row.UnmarshalJSON(row_data)
