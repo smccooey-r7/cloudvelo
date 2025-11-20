@@ -22,6 +22,8 @@ import (
 	vqlutils "www.velocidex.com/golang/velociraptor/vql/utils"
 	"www.velocidex.com/golang/vfilter"
 	"www.velocidex.com/golang/vfilter/arg_parser"
+
+	_ "www.velocidex.com/golang/velociraptor/vql/server/hunts"
 )
 
 type HuntResultsPluginArgs struct {
