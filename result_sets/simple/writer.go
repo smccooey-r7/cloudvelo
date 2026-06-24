@@ -3,11 +3,11 @@ package simple
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/Velocidex/ordereddict"
 	"www.velocidex.com/golang/cloudvelo/services"
 	cvelo_services "www.velocidex.com/golang/cloudvelo/services"
-	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/file_store/api"
 	"www.velocidex.com/golang/velociraptor/json"
 	"www.velocidex.com/golang/velociraptor/utils"
@@ -28,17 +28,12 @@ type ElasticSimpleResultSetWriter struct {
 	// and can be expensive).
 	truncated bool
 
-	ctx        context.Context
-	config_obj *config_proto.Config
+	ctx context.Context
 
 	// If this is set writes will be syncrounous
 	sync bool
 
-	md *ResultSetMetadataRecord
-
-	version             string
-	rows_per_result_set uint64
-	max_size_per_packet uint64
+	version string
 }
 
 // Not currently implemented but in future will be used to update
@@ -47,29 +42,7 @@ func (self *ElasticSimpleResultSetWriter) Update(uint64, *ordereddict.Dict) erro
 	return errors.New("Updating result sets is not implemented yet.")
 }
 
-func (self *ElasticSimpleResultSetWriter) Abort() {
-	self.md.TotalRows = -1
-	self.md.EndRow = -1
-	self.Close()
-}
-
 func (self *ElasticSimpleResultSetWriter) WriteJSONL(
-	serialized []byte, total_rows uint64) {
-
-	// Valid JSONL should be followed by \n already
-	self.buff = append(self.buff, serialized...)
-	self.buffered_rows += int(total_rows)
-
-	// Flush depending on the total size of the buffer. If the rows
-	// are large, we try to keep document size under 1mb.
-	if uint64(self.buffered_rows) > self.rows_per_result_set ||
-		uint64(len(self.buff)) > self.max_size_per_packet {
-		self.Flush()
-	}
-}
-
-// Write the JSONL record into a single document.
-func (self *ElasticSimpleResultSetWriter) writeJSONL(
 	serialized []byte, total_rows uint64) {
 
 	record := NewSimpleResultSetRecord(self.log_path, self.version)
@@ -81,23 +54,17 @@ func (self *ElasticSimpleResultSetWriter) writeJSONL(
 	record.Type = "result_set"
 
 	self.start_row = record.EndRow
-	self.md.EndRow = record.EndRow
-
 	record.TotalRows = uint64(self.start_row)
 
 	if self.sync {
-		err := services.SetElasticIndex(
+		services.SetElasticIndex(
 			self.ctx, self.org_id, "transient",
 			services.DocIdRandom, record)
-		if err != nil {
-			self.Abort()
-		}
-		return
+	} else {
+		services.SetElasticIndexAsync(
+			self.org_id, "transient", services.DocIdRandom,
+			cvelo_services.BulkUpdateCreate, record)
 	}
-
-	services.SetElasticIndexAsync(
-		self.org_id, "transient", services.DocIdRandom,
-		cvelo_services.BulkUpdateCreate, record)
 }
 
 func (self *ElasticSimpleResultSetWriter) Write(row *ordereddict.Dict) {
@@ -110,10 +77,7 @@ func (self *ElasticSimpleResultSetWriter) Write(row *ordereddict.Dict) {
 	self.buff = append(self.buff, '\n')
 	self.buffered_rows++
 
-	// Flush depending on the total size of the buffer. If the rows
-	// are large, we try to keep document size under 1mb.
-	if uint64(self.buffered_rows) > self.rows_per_result_set ||
-		uint64(len(self.buff)) > self.max_size_per_packet {
+	if self.buffered_rows > 100 {
 		self.Flush()
 	}
 }
@@ -127,17 +91,58 @@ func (self *ElasticSimpleResultSetWriter) SetStartRow(start_row int64) error {
 	return nil
 }
 
+const getLargestRowId = `
+{
+  "query": {
+     "bool": {
+       "must": [
+            {"match": {"type": "result_set"}},
+            {"match": {"id": %q}},
+            {"match": {"vfs_path": %q}}
+       ]}
+  },
+  "size": 0,
+  "aggs": {
+    "genres": {
+      "max": {"field": "end_row"}
+    }
+  }
+}
+`
+
+func (self *ElasticSimpleResultSetWriter) getLastRow() error {
+	query := json.Format(getLargestRowId,
+		self.version, self.log_path.AsClientPath())
+
+	hits, err := services.QueryElasticAggregations(
+		self.ctx, self.org_id, "transient", query)
+
+	if err != nil {
+		return err
+	}
+
+	for _, hit := range hits {
+		end_row, err := strconv.ParseInt(hit, 10, 64)
+		if err == nil {
+			self.start_row = end_row
+		}
+		self.truncated = true
+	}
+	return nil
+}
+
 func (self *ElasticSimpleResultSetWriter) Flush() {
 	if self.buffered_rows == 0 {
 		return
 	}
 
-	self.writeJSONL(self.buff, uint64(self.buffered_rows))
+	if !self.truncated {
+		self.getLastRow()
+	}
+
+	self.WriteJSONL(self.buff, uint64(self.buffered_rows))
 	self.buff = nil
 	self.buffered_rows = 0
-
-	// Write a newer version of the MD record.
-	_ = SetResultSetMetadata(self.ctx, self.config_obj, self.log_path, self.md)
 
 	// Make sure the results are visible immediately
 	cvelo_services.FlushIndex(self.ctx, self.org_id, "transient")

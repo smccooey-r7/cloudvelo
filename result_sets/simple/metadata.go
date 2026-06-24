@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	// Get the latest metadata record with the most recent timestamp.
 	result_md_query = `
 {
  "query": {"bool": {"must": [
@@ -29,8 +28,6 @@ type ResultSetMetadataRecord struct {
 	Timestamp int64  `json:"timestamp"`
 	VFSPath   string `json:"vfs_path"`
 	ID        string `json:"id"`
-	EndRow    int64  `json:"end_row"`
-	TotalRows int64  `json:"total_rows"`
 	Type      string `json:"type"`
 }
 
@@ -43,11 +40,6 @@ func GetResultSetMetadata(
 	ctx context.Context,
 	config_obj *config_proto.Config,
 	log_path api.FSPathSpec) (*ResultSetMetadataRecord, error) {
-
-	cvelo_services.Count("GetResultSetMetadata")
-	cvelo_services.Debug(
-		cvelo_services.DEBUG_RESULT_SET,
-		"GetResultSetMetadata: %v", log_path.AsClientPath())()
 
 	base_record := NewSimpleResultSetRecord(log_path, "")
 

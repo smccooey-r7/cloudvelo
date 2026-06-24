@@ -43,7 +43,6 @@ type SimpleResultSetReader struct {
 	opts               result_sets.ResultSetOptions
 	base_record        *SimpleResultSetRecord
 	mtime              time.Time
-	md                 *ResultSetMetadataRecord
 
 	stacker api.FSPathSpec
 }
@@ -60,11 +59,6 @@ func (self *SimpleResultSetReader) SeekToRow(start int64) error {
 // encompassing the required row.
 func (self *SimpleResultSetReader) getPacket(
 	ctx context.Context, row int64) (*SimpleResultSetRecord, error) {
-
-	cvelo_services.Count("SimpleResultSet: getPacket")
-	cvelo_services.Debug(
-		cvelo_services.DEBUG_RESULT_SET, "getPacket: %v (%v)",
-		self.log_path, row)()
 
 	var artifact_clause, query string
 
@@ -137,11 +131,6 @@ func (self *SimpleResultSetReader) Rows(
 				break
 			}
 
-			// We read enough rows
-			if self.md.EndRow > 0 && self.row >= self.md.EndRow {
-				break
-			}
-
 			packet, err := self.getPacket(ctx, self.row)
 			if err != nil {
 				return
@@ -201,11 +190,6 @@ func (self *SimpleResultSetReader) JSON(
 				break
 			}
 
-			// We read enough rows
-			if self.md.EndRow > 0 && self.row >= self.md.EndRow {
-				break
-			}
-
 			packet, err := self.getPacket(ctx, self.row)
 			if err != nil {
 				return
@@ -260,20 +244,19 @@ func (self *SimpleResultSetReader) Close() {}
 
 // Figure out how many rows are in this collection in total.
 func (self *SimpleResultSetReader) TotalRows() int64 {
-	return self.md.EndRow
+	org_id := filestore.GetOrgId(self.file_store_factory)
+	last_rec, err := getLastRecord(org_id, self.base_record)
+	if err != nil {
+		return -1
+	}
+
+	return last_rec.EndRow
 }
 
-// Deprecated: Current code sets the last row number in another
-// metadata document in the EndRow field. This is here for backwards
-// compatibility.
-func getLastRecord(
-	ctx context.Context,
-	org_id string,
+func getLastRecord(org_id string,
 	base_record *SimpleResultSetRecord) (*SimpleResultSetRecord, error) {
-
+	ctx := context.Background()
 	var artifact_clause, query string
-
-	cvelo_services.Count("SimpleResultSet: getLastRecord")
 
 	if base_record.VFSPath != "" {
 		query = json.Format(`

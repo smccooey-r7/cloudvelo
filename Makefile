@@ -4,7 +4,7 @@ OVERRIDE_FILE=./Docker/config/local_override.json
 BINARY=./output/cvelociraptor
 CONFIG_ARGS= --config $(SERVER_CONFIG) --override_file $(OVERRIDE_FILE)
 CLIENT_CONFIG_ARGS= --config $(CLIENT_CONFIG) --override_file $(OVERRIDE_FILE)
-DLV=dlv debug --init ./scripts/dlv.init --build-flags="-tags 'server_vql extras'" ./bin/ -- --debug --debug_filter result_set
+DLV=dlv debug --build-flags="-tags 'server_vql extras'" ./bin/ --
 WRITEBACK_DIR=/tmp/pool_writebacks/
 POOL_NUMBER=20
 
@@ -31,7 +31,7 @@ dump:
 	$(BINARY) $(CONFIG_ARGS) elastic dump -v
 
 dump_persisted:
-	$(BINARY) $(CONFIG_ARGS) elastic dump --index="persisted" -v --dump_count 2000
+	$(BINARY) $(CONFIG_ARGS) elastic dump --index="persisted" -v --org_id O123
 
 debug_gui:
 	$(DLV) $(CONFIG_ARGS) gui -v
